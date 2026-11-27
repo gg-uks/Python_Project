@@ -42,12 +42,14 @@ export function ReportView({ type }) {
 // ZIP 안 폴더 이름: '① 메뉴 군집' → '1_메뉴군집', '② 별점 × 재료비' → '2_별점x재료비'
 const folderOf = (label, i) => `${i + 1}_${label.replace(/^[①-⑳]\s*/, '').replace(/\s*×\s*/g, 'x').replace(/[\s/\\:*?"<>|]+/g, '')}`
 
-// 그림을 데이터 분석 탭(INSIGHT_TABS 의 그림 파일 목록) 기준으로 묶음. 어디에도 없는 그림은 '기타'
+// 그림을 분석 번호(no — 6 · "5-1" 처럼 와서 '-' 앞만)로 묶음. 번호가 안 맞으면 INSIGHT_TABS 의 파일 목록으로. 어디에도 없는 그림은 '기타'
 function groupCharts(charts) {
-  const groups = INSIGHT_TABS.map(([key, label, , , files], i) => ({
-    key, label, folder: folderOf(label, i), charts: charts.filter(c => files.includes(c.file)),
-  }))
-  const known = new Set(INSIGHT_TABS.flatMap(t => t[4]))
+  const groups = INSIGHT_TABS.map(([key, label, , fn, files], i) => {
+    const no = String(fn || '').replace('chart', '')
+    const byNo = charts.filter(c => no && String(c.no).split('-')[0] === no)
+    return { key, label, folder: folderOf(label, i), charts: byNo.length ? byNo : charts.filter(c => files.includes(c.file)) }
+  })
+  const known = new Set(groups.flatMap(g => g.charts.map(c => c.file)))
   const etc = charts.filter(c => !known.has(c.file))
   if (etc.length) groups.push({ key: 'etc', label: '기타', folder: `${INSIGHT_TABS.length + 1}_기타`, charts: etc })
   return groups
