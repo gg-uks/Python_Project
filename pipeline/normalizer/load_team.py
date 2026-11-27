@@ -218,6 +218,37 @@ def main():
     ins('INSERT INTO omm_youtube_video_keywords (video_id, keyword_id, matched_by) VALUES %s ON CONFLICT DO NOTHING', sorted(vk))
     report.append(f'YouTube 검색어 · 메뉴 키워드 {len(kws)} · 영상 {len(vids):,}')
 
+    # ───── 8-2. YouTube 요즘 뜨는 음식 (회차별 growth) ─────
+    # collector youtube_trend.py 의 trend_foods.csv 와 같은 계산: 최근 vs 이전, 기간마다 표본 안 비중끼리 비교
+    runs = collections.defaultdict(dict)                         # 회차 → {(영상, 기간): 행}  여러 검색어에 걸린 같은 영상은 한 번만
+    for r in yv:
+        if r.get('run_date') and r.get('video_id') and r.get('period') in ('최근', '이전'):
+            runs[r['run_date'][:10]].setdefault((r['video_id'], r['period']), r)
+    tf = []
+    for rd, rows in runs.items():
+        n = collections.Counter(p for _, p in rows)
+        n_recent, n_before = max(n['최근'], 1), max(n['이전'], 1)
+        cnt = collections.defaultdict(lambda: {'최근': 0, '이전': 0, 'views': 0, 'example': '', 'channels': set()})
+        for (_, period), r in rows.items():
+            for food in {f.strip()[:50] for f in (r.get('foods') or '').split('|') if f.strip()}:
+                c = cnt[food]
+                c[period] += 1
+                if period == '최근':
+                    c['views'] += to_int(r.get('views')) or 0
+                    c['channels'].add(r.get('channel'))
+                    c['example'] = c['example'] or (r.get('title') or '')[:300]
+        for food, c in cnt.items():
+            mid = menu_id.get(food)
+            # 한 채널이 자기 해시태그를 반복한 건 트렌드가 아님 → 최근 채널 2곳 이상 (사전에 없는 이름은 3곳 이상)
+            if len(c['channels']) < (2 if mid else 3):
+                continue
+            tf.append((rd, food, mid, c['최근'], c['이전'], len(c['channels']), n_recent, n_before,
+                       round(((c['최근'] + 0.5) / n_recent) / ((c['이전'] + 0.5) / n_before), 2), c['views'], c['example'] or None))
+    if runs:
+        cur.execute('DELETE FROM omm_youtube_trend_foods WHERE run_date = ANY(%s::date[])', (sorted(runs),))   # 다시 계산한 회차는 통째로 새로
+    ins('INSERT INTO omm_youtube_trend_foods VALUES %s', tf)
+    report.append(f'YouTube 뜨는 음식 {len(runs)}회차 · {len(tf):,}행')
+
     # ───── 9. 기본값: 단위 환산 · 맛 표현 · 취향 태그 ─────
     ins('INSERT INTO omm_unit_conversions (unit, grams, amount_class) VALUES %s ON CONFLICT ON CONSTRAINT cs_omm_unit_conversions_1 DO UPDATE SET grams = EXCLUDED.grams, amount_class = EXCLUDED.amount_class',
         [(u, g, 'AMOUNT_' + c) for u, (c, g) in UNITS.items()])
