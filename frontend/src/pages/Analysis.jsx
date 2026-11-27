@@ -215,10 +215,12 @@ function Cell({ n, code, children, md, collapsed }) {
   )
 }
 
-function Figures({ files, report }) {
+function Figures({ files, fn, report }) {
   if (!report) return null
   if (!report.charts.length) return <div className="nb-note">아직 그린 그림이 없어요. 관리자 › 보고서 차트 탭에서 ‘다시 그리기’를 눌러 주세요.</div>
-  const list = report.charts.filter(c => files.includes(c.file))
+  const no = String(fn || '').replace('chart', '')
+  const byNo = report.charts.filter(c => no && String(c.no).split('-')[0] === no)
+  const list = byNo.length ? byNo : report.charts.filter(c => files.includes(c.file))
   if (!list.length) return <div className="nb-note">이 분석 그림이 아직 없어요. 보고서 차트 탭에서 ‘다시 그리기’를 한 번 눌러 주세요 (새 그림 추가됨).</div>
   return list.map(c => {
     const svg = api.reportUrl(c.svg || c.file.replace(/\.png$/, '.svg'), report.generatedAt)
@@ -283,7 +285,7 @@ export default function Analysis() {
         </State>
 
         <Cell n={n++} collapsed code={`# [2단계] 분석 코드 — ${src.data?.file || 'report/analyses/'} (back1 에서 매일 18:30 자동 실행)\n# ==============================================================================\n${src.data?.code || ''}\n\n${tab[3]}()`}>
-          <State loading={report.loading}><Figures files={tab[4]} report={report.data} /></State>
+          <State loading={report.loading}><Figures files={tab[4]} fn={tab[3]} report={report.data} /></State>
         </Cell>
 
         <Cell md={<div className="an-how">
