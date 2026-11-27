@@ -5,18 +5,10 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useApi, State } from '../components/ui'
 import DataFrame from '../components/DataFrame'
+import { INSIGHT_TABS } from '../insights'
 
-// [주소 값, 탭 이름, 분석 목적, matplotlib 함수, 그림 파일들]
-const TABS = [
-  ['clusters', '① 메뉴 군집', '조리시간 · 재료비 기반 메뉴 군집화 (4개 유형) → 상황에 맞는 메뉴 추천 기준으로 활용', 'chart1', ['1_군집.png']],
-  ['rating-cost', '② 별점 × 재료비', '별점과 예상 재료비의 상관관계 → 상관이 약하면 "저렴해도 만족도 높은 메뉴"를 추천 근거로 제시', 'chart2', ['2_별점_재료비.png']],
-  ['person', '③ 사람 이름', '레시피 제목의 사람 이름 포함 여부와 조회수 · 별점의 관계', 'chart3', ['3_사람이름.png']],
-  ['taste', '④ 맛 표현', '맛 표현별 주요 재료 집계 → "매콤한 거 먹고 싶어" 같은 상황 문장 추천에 활용', 'chart4', ['4_맛표현_재료.png']],
-  ['interest', '⑤ 트렌드 키워드', '최근 레시피 트렌드 키워드 분석 (예: 로제 · 두바이) → YouTube Data API', 'chart5', ['5_트렌드.png', '5_트렌드_순위.png']],
-  ['value', '⑥ 영양 효율', '재료비 대비 영양 효율성 분석 → 공공데이터 4종(가격 · 영양)으로 계산한 분포', 'chart6', ['6_영양효율.png']],
-  ['network', '⑦ 재료 네트워크', '레시피 간 식재료 공유 네트워크 → 레시피마다 재료의 연관성', 'chart7', ['7_네트워크.png', '7_중심성.png']],
-  ['measure', '⑧ 계량 신뢰도', '"넉넉히 · 약간"처럼 대충 적은 레시피는 신뢰도가 낮음 → 단위로 적힌 레시피(그대로 구현 가능)와 분류해 차트화', 'chart8', ['8_신뢰도.png']],
-]
+// 탭 정의는 보고서 차트와 같이 쓰려고 src/insights.js 로 옮김
+const TABS = INSIGHT_TABS
 
 // 탭마다 데이터 불러오기 (화면이 실제로 부르는 API) + 노트북에 보일 코드
 const EXTRA = ['rating-cost', 'person', 'taste']
