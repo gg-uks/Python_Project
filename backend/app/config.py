@@ -13,7 +13,7 @@ def _list(name: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Settings:
-    pg_host: str = os.getenv("PGHOST", "10.0.56.101")
+    pg_host: str = os.getenv("PGHOST", "10.0.56.100")
     pg_port: str = os.getenv("PGPORT", "5432")
     pg_db: str = os.getenv("PGDATABASE", "omm")
     pg_user: str = os.getenv("PGUSER", "omm_api")

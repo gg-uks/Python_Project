@@ -21,6 +21,7 @@ import math
 import re
 import threading
 import time
+from collections import defaultdict
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -41,6 +42,8 @@ SIMILAR_RECENT = 0.8        # 최근 먹은 메뉴와 이 유사도 이상이면
 DROP_DISH = {"김치"}
 SNACK_DISH = "디저트·음료"  # 간식 · 달달 태그나 메뉴를 직접 말했을 때만
 MEMO_TTL = 600
+# 요리 종류 규칙은 없지만(글자로 고름) 그 종류로 6개를 채워도 되는 태그 → 종류당 개수 제한에서 뺌
+DISH_PREF = {"면요리": "면·분식", "반찬": "반찬·메인"}
 
 # ── 태그 규칙 → SQL ─────────────────────────────────────────────────────────
 # r = omm_recipes, m = omm_recipe_metrics, mn = omm_menus
@@ -225,8 +228,15 @@ class RecommendReq(BaseModel):
     limit: int = Field(6, ge=1, le=12)
 
 
-@router.post("/text", summary="상황 문장으로 메뉴 추천 (로그인 시 취향 반영, 최근 식사는 recentDays 로 선택)")
+@router.post("/text", summary="상황 문장으로 메뉴 추천 = 사전 + 엘라스틱서치 (기본). ES 가 멈추면 사전만 (engine: rule)")
 def recommend(body: RecommendReq, conn: Conn, user: OptionalUser):
+    # 11-26: 기본 추천을 ② 사전+ES 로 (compare5 비교에서 사전에 없는 말까지 가장 잘 맞춤). 프론트는 그대로 /text 를 부름
+    from .search_es import recommend_es        # search_es 가 이 파일을 import 하므로 함수 안에서 (순환 import 방지)
+    return recommend_es(body, conn, user)
+
+
+@router.post("/rule", summary="상황 문장 추천 - 사전(규칙)만, ES 안 씀 (비교 · 벤치마크용, compare5 ①)")
+def recommend_rule(body: RecommendReq, conn: Conn, user: OptionalUser):
     return run_recommend(body, conn, user)
 
 
@@ -261,6 +271,8 @@ def run_recommend(body: RecommendReq, conn, user, extra_fn=None, engine: str = "
     tag_shares = {t: _tag_shares(conn, t) for t in a.tags}
     want_ing = {w: _ingredient_shares(conn, ids, base) for w, ids in a.want_ingredients.items()}
     want_menu_ids = set(a.want_menus.values())
+    # 말한 메뉴와 같은 요리 종류 (국수 → 면·분식). 이름에 그 말이 든 메뉴(국수 → 잔치국수 · 비빔국수)는 더 위로
+    want_menu_dish = {base[m]["dishType"] for m in want_menu_ids if m in base}
     snack_ok = bool(want_menu_ids) or any(d.tags[t]["name"] in ("간식", "달달") for t in a.tags)
     extra = extra_fn(a, base) if extra_fn else {}
 
@@ -279,6 +291,17 @@ def run_recommend(body: RecommendReq, conn, user, extra_fn=None, engine: str = "
             score += 3
             why.append("말씀하신 메뉴")
             matched = True
+        elif want_menu_ids:
+            kin = next((w for w, m in a.want_menus.items() if len(w) >= 2 and w in c["name"]
+                        and m in base and base[m]["dishType"] == c["dishType"]), None)   # 같은 종류 안에서만 (김치전 ≠ 김치전골)
+            if kin:
+                score += 1.2
+                why.append(f"{kin} 종류")
+                matched = True
+            elif c["dishType"] in want_menu_dish:
+                score += 0.5
+                why.append(f"비슷한 {c['dishType']}")
+                matched = True
         for t, shares in tag_shares.items():
             if mid in shares:
                 share, norm = shares[mid]
@@ -313,6 +336,9 @@ def run_recommend(body: RecommendReq, conn, user, extra_fn=None, engine: str = "
     wanted_dish = {t["ref_text"] for t in conn.execute(
         "SELECT ref_text FROM omm_situation_targets WHERE rule_type = 'RULE_DISH_TYPE' AND sit_tag_id = ANY(%s)",
         (list(a.tags),)).fetchall()} if a.tags else set()
+    wanted_dish |= {DISH_PREF[d.tags[t]["name"]] for t in a.tags if d.tags[t]["name"] in DISH_PREF}
+    if want_menu_ids and not a.tags:          # 메뉴 이름만 말했으면 그 종류로 채워도 됨 (상황 태그가 같이 있으면 다양하게)
+        wanted_dish |= want_menu_dish
     # 1차: 문장에 맞은 메뉴 (종류마다 3개까지) → 2차: 나머지 (종류마다 2개까지) → 3차: 모자라면 아무거나
     picked, per_dish, taken = [], {}, set()
     for only_matched, cap in ((True, 3), (False, 2), (False, None)):
@@ -370,13 +396,63 @@ def run_recommend(body: RecommendReq, conn, user, extra_fn=None, engine: str = "
 # ── 먹은 기록 기반: 비슷한 메뉴 먼저 ────────────────────────────────────────────
 HALF_LIFE_DAYS = 7          # 7일 지난 기록은 반만 셈 (최근 · 자주 먹은 메뉴일수록 크게)
 OTHER_DISH_FACTOR = 0.6     # 먹은 메뉴와 요리 종류가 다르면 유사도를 60%만 반영 (재료만 겹치는 다른 요리는 뒤로)
+# 11-26: 사전 + ES (engine=es, 기본). engine=rule 이면 예전 방식 (재료 유사도만, 비교용)
+ES_SIM_WEIGHT = 1.0         # ES 비슷한 레시피 (먹은 메뉴의 인기 레시피 3개와 제목 · 태그 · 재료가 비슷한 레시피 → 메뉴)
+OLD_SIM_WEIGHT = 0.5        # 재료 유사도(omm_menu_similarities)는 거칠어서 (국수 → 고추무침) ES 를 쓸 때는 반만
+TAG_PROFILE_WEIGHT = 0.6    # 사전: 먹은 메뉴들이 자주 걸리는 상황 · 맛 태그 (#매운맛 · #국물 …) 와 같은 태그의 메뉴
+SIM_MENUS = 5               # ES 로 비슷한 메뉴를 찾는 먹은 메뉴 수 (가중치 큰 순)
+TAG_BROAD = 0.35            # 후보 메뉴의 35% 넘게 걸리는 넓은 태그(#간단하게 · #가성비)는 취향으로 안 봄
+
+
+def _es_similar_menus(conn, menu_id: int) -> dict[int, float]:
+    """먹은 메뉴의 인기 레시피 3개와 비슷한 레시피 (ES more_like_this) → {비슷한 메뉴: 0~1}. 캐시 (적재 버전별)"""
+    from .search_es import _es                 # search_es 가 이 파일을 import 하므로 함수 안에서
+
+    def fetch():
+        rids = [r["recipe_id"] for r in conn.execute(
+            "SELECT recipe_id FROM omm_recipes WHERE menu_id = %s ORDER BY view_count DESC NULLS LAST LIMIT 3",
+            (menu_id,)).fetchall()]
+        if not rids:
+            return {}
+        hits = _es("/omm_recipes/_search", {"size": 200, "_source": False, "query": {"more_like_this": {
+            "fields": ["title", "tags", "ingredients_flat"],
+            "like": [{"_index": "omm_recipes", "_id": str(r)} for r in rids],
+            "min_term_freq": 1, "min_doc_freq": 3, "max_query_terms": 30, "minimum_should_match": "20%"}}})["hits"]["hits"]
+        menu_of = {r["recipe_id"]: r["menu_id"] for r in conn.execute(
+            "SELECT recipe_id, menu_id FROM omm_recipes WHERE recipe_id = ANY(%s) AND menu_id IS NOT NULL",
+            ([int(h["_id"]) for h in hits],)).fetchall()}
+        scores = defaultdict(list)
+        for h in hits:
+            m = menu_of.get(int(h["_id"]))
+            if m is not None and m != menu_id:
+                scores[m].append(h["_score"])
+        total = {m: sum(sorted(v, reverse=True)[:3]) for m, v in scores.items()}
+        top = max(total.values(), default=0)
+        return {str(m): round(v / top, 4) for m, v in total.items()} if top else {}
+    return {int(k): v for k, v in cache.cached(conn, "es-sim", {"m": menu_id}, fetch).items()}
+
+
+def _tag_profile(conn, d, weight: dict[int, float], base: dict) -> dict[int, float]:
+    """사전: 먹은 메뉴들이 레시피 50% 이상 걸리는 태그 → {태그: 먹은 비중}. 먹은 것의 절반 이상인 태그, 많아야 2개"""
+    total = sum(weight.values()) or 1.0
+    prof = {}
+    for t in d.tags:
+        shares = _tag_shares(conn, t)
+        if sum(1 for m in base if shares.get(m, (0, 0))[0] >= 0.3) > TAG_BROAD * len(base):
+            continue
+        w = sum(wt for m, wt in weight.items() if shares.get(m, (0, 0))[0] >= 0.5)
+        if w / total >= 0.5:
+            prof[t] = round(w / total, 3)
+    return dict(sorted(prof.items(), key=lambda x: -x[1])[:2])
+
 
 
 @router.get("/similar", summary="(로그인) 최근 먹은 메뉴와 비슷한 메뉴 먼저 추천")
 def similar_to_meals(user: CurrentUser, conn: Conn,
                      days: int = Query(30, ge=1, le=180, description="이 기간의 먹은 기록을 봄"),
                      excludeRecentDays: int = Query(3, ge=0, le=14, description="최근 N일 먹은 메뉴는 결과에서 뺌"),
-                     limit: int = Query(6, ge=1, le=24)):
+                     limit: int = Query(6, ge=1, le=24),
+                     engine: str = Query("es", pattern="^(es|rule)$", description="es = 사전 + ES (기본), rule = 재료 유사도만 (비교용)")):
     """점수 = Σ (먹은 메뉴 가중치 × 메뉴 유사도 × 요리 종류 다르면 0.6) 정규화 + 0.3 × 자주 먹은 요리 종류 비율 + 0.2 × 인기.
     먹은 메뉴 가중치 = Σ 0.5^(지난 날 / 7) × 인분. 기록이 없으면 인기 메뉴."""
     d = load_dictionary(conn)
@@ -385,6 +461,11 @@ def similar_to_meals(user: CurrentUser, conn: Conn,
         SELECT menu_id, current_date - eaten_on AS age, servings
         FROM omm_user_meals WHERE user_id = %s AND eaten_on > current_date - %s AND menu_id IS NOT NULL
     """, (user["user_id"], days)).fetchall()
+    return _similar(conn, user, d, base, meals, excludeRecentDays, limit, engine)
+
+
+def _similar(conn, user, d, base, meals, excludeRecentDays: int, limit: int, engine: str):
+    """비슷한 메뉴 추천 본체 (meals = [{menu_id, age, servings}]). 시험할 때 기록을 직접 넣을 수 있게 따로 둠"""
 
     weight: dict[int, float] = {}
     times: dict[int, int] = {}
@@ -414,6 +495,27 @@ def similar_to_meals(user: CurrentUser, conn: Conn,
                 src[c] = (part, r["menu_id"], float(r["score"]))
     top_sim = max(sim.values(), default=1.0) or 1.0
 
+    # ES 비슷한 레시피 · 사전 태그 취향 (engine=es)
+    es_sim: dict[int, float] = {}
+    es_src: dict[int, tuple[float, int]] = {}
+    profile: dict[int, float] = {}
+    es_error = None
+    if engine == "es" and weight:
+        from .search_es import EsDown
+        try:
+            for eaten in sorted(weight, key=lambda m: -weight[m])[:SIM_MENUS]:
+                for c, v in _es_similar_menus(conn, eaten).items():
+                    part = weight[eaten] * v
+                    es_sim[c] = es_sim.get(c, 0) + part
+                    if part > es_src.get(c, (0, 0))[0]:
+                        es_src[c] = (part, eaten)
+        except EsDown as e:
+            es_error, es_sim, es_src = str(e)[:100], {}, {}
+        profile = _tag_profile(conn, d, weight, base)
+    top_es = max(es_sim.values(), default=1.0) or 1.0
+    tag_sh = {t: _tag_shares(conn, t) for t in profile}
+    old_w = OLD_SIM_WEIGHT if es_sim else 1.0
+
     excluded, _, pref_want, _ = _user_filters(conn, user, d, None, base, excludeRecentDays)
     snack_ok = SNACK_DISH in dish_share
 
@@ -422,12 +524,24 @@ def similar_to_meals(user: CurrentUser, conn: Conn,
         if mid in excluded or c["dishType"] in DROP_DISH or (c["dishType"] == SNACK_DISH and not snack_ok):
             continue
         s, why, matched = 0.0, [], False
+        if mid in es_sim and es_sim[mid] / top_es >= 0.15:
+            s += ES_SIM_WEIGHT * es_sim[mid] / top_es
+            matched = True
+            from_id = es_src[mid][1]
+            if from_id in base:
+                why.append(f"{base[from_id]['name']}{_wa(base[from_id]['name'])} 비슷한 레시피")
         if mid in sim:
-            s += sim[mid] / top_sim
+            s += old_w * sim[mid] / top_sim
             matched = True
             _, from_id, score = src[mid]
-            if from_id in base:
+            if from_id in base and not any("비슷" in w for w in why):
                 why.append(f"{base[from_id]['name']}{_wa(base[from_id]['name'])} 비슷해요 ({round(score * 100)}%)")
+        for t, pw in profile.items():
+            share, norm = tag_sh[t].get(mid, (0, 0))
+            if share >= 0.3:
+                s += TAG_PROFILE_WEIGHT * pw * norm
+                matched = True
+                why.append(f"자주 먹은 #{d.tags[t]['name']}")
         share = dish_share.get(c["dishType"], 0)
         if share:
             s += 0.3 * share
@@ -442,7 +556,8 @@ def similar_to_meals(user: CurrentUser, conn: Conn,
         scored.append((s, matched, mid, why))
     scored.sort(key=lambda x: (-x[0], x[2]))
 
-    # 비슷한 메뉴 먼저 (종류마다 3개) → 모자라면 나머지
+    # 비슷한 메뉴 먼저 (종류마다 3개, 취향 태그가 #면요리 · #반찬이면 그 종류는 제한 없음) → 모자라면 나머지
+    free_dish = {DISH_PREF[d.tags[t]["name"]] for t in profile if d.tags[t]["name"] in DISH_PREF}
     picked, per_dish, taken = [], {}, set()
     for only_matched, cap in ((True, 3), (False, 2), (False, None)):
         for s, matched, mid, why in scored:
@@ -451,7 +566,7 @@ def similar_to_meals(user: CurrentUser, conn: Conn,
             if mid in taken or (only_matched and not matched):
                 continue
             dish = base[mid]["dishType"]
-            if cap is not None and per_dish.get(dish, 0) >= cap:
+            if cap is not None and dish not in free_dish and per_dish.get(dish, 0) >= cap:
                 continue
             picked.append((s, matched, mid, why))
             taken.add(mid)
@@ -461,6 +576,9 @@ def similar_to_meals(user: CurrentUser, conn: Conn,
                         "weight": round(w, 3)} for m, w in weight.items()), key=lambda x: -x["weight"])[:10]
     return {
         "title": "최근 먹은 메뉴와 비슷한 메뉴" if weight else "먹은 기록이 없어서 많이 찾는 메뉴를 보여 드려요",
+        "engine": "es" if es_sim else "rule",
+        **({"esError": es_error} if es_error else {}),
+        "tasteTags": [d.tags[t]["name"] for t in sorted(profile, key=lambda t: -profile[t])],
         "basedOn": based_on,
         "items": [{k: base[mid][k] for k in ("menuId", "name", "dishType", "repRecipeId", "repTitle", "imageUrl",
                                               "cookMin", "costPerServing")} | {"reasons": why, "similar": matched,

@@ -1,0 +1,19 @@
+[data_go]
+service_key = 여기에_값
+
+[youtube]
+api_key = 여기에_값
+
+[mongo]
+hosts = 여기에_값
+replica_set = omm-rs
+db = OMM
+user = 여기에_값
+auth_source = OMM
+password = 여기에_값
+
+[kafka]
+enabled = yes
+bootstrap = 10.0.56.101:9092,10.0.56.102:9092,10.0.56.103:9092
+
+

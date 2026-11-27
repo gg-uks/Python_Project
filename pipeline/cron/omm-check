@@ -1,0 +1,5 @@
+# /etc/cron.d/omm-check — 매일 점검 → 슬랙 (back1 · back2 같은 내용)
+# 두 서버 모두 돌지만 --if-owner 라서 수집기 주인 서버만 점검 · 전송 (한 대가 꺼져도 살아 있는 쪽이 보냄)
+# 22:00 = 노멀라이저 대신 돌리기(21:30) 뒤
+SHELL=/bin/bash
+0 22 * * * root bash /opt/pipeline/check_daily.sh --slack --if-owner >> /var/log/omm-check.log 2>&1

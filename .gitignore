@@ -21,3 +21,10 @@ backend/report/.mpl/
 *.bak_*
 # 예시 데이터 (만개의레시피 수집 데이터 · 공개 저장소에 올리지 않음)
 frontend/public/mock-data.json
+# 파이프라인 비밀 값 · 수집 데이터
+pipeline/collector/config.ini
+pipeline/**/omm.env
+slack.env
+pipeline/**/data/
+pipeline/**/logs/
+pipeline/**/backups/

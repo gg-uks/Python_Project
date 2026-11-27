@@ -1,0 +1,2 @@
+SHELL=/bin/bash
+30 18 * * * ommapi set -a; . /opt/pipeline/api/omm-api.env; set +a; REPORT_DIR=/opt/pipeline/api/report MPLCONFIGDIR=/opt/pipeline/api/report/.mpl /opt/pipeline/api/.venv/bin/python /opt/pipeline/api/report/charts_v4.py > /opt/pipeline/api/report/last_run.log 2>&1

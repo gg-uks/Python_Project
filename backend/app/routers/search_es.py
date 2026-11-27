@@ -65,6 +65,47 @@ def _es(path: str, body: dict | None = None) -> dict:
 def _norm(q: str) -> str:
     return " ".join(q.split())[:50]
 
+# ── 검색어 교정 (오타 · 별칭 → 표준 메뉴명) ───────────────────────────────────
+def _fix_query(conn, q: str) -> str:
+    """검색어 전체가 메뉴 별칭이거나, 메뉴 이름과 한 글자만 다르면 표준 메뉴명으로 바꿈.
+    예) 김치찌게 → 김치찌개 (오타) · 쏘야 → 소세지야채볶음 (별칭)
+    메뉴 이름과 똑같으면 · 띄어쓴 검색어면 · ES 가 멈췄으면 그대로 둠"""
+    if len(q) < 2 or " " in q:
+        return q
+    # 재료 이름 · 재료 별칭과 똑같으면 오타가 아님 (고추장 → 고추지 · 베이컨 → 베이글 · 새우젓 → 새우전 막기)
+    if conn.execute("""SELECT 1 FROM omm_ingredients WHERE name = %s AND recipe_count >= 3
+                       UNION ALL
+                       SELECT 1 FROM omm_ingredient_aliases a JOIN omm_ingredients i USING (ingredient_id)
+                       WHERE a.alias = %s AND a.is_active AND i.recipe_count >= 3 LIMIT 1""", (q, q)).fetchone():
+        return q
+
+    def fetch():
+        res = _es("/omm_menus/_search", {
+            "size": 1, "_source": ["menu"],
+            "query": {"bool": {"should": [
+                {"term": {"menu.raw": {"value": q, "boost": 10, "_name": "exact"}}},
+                {"term": {"aliases.raw": {"value": q, "boost": 8, "_name": "alias"}}},
+                {"fuzzy": {"menu.raw": {"value": q, "fuzziness": 1, "prefix_length": 1,
+                                        "boost": 4, "_name": "fuzzy"}}},
+            ], "minimum_should_match": 1}},
+        })
+        hits = res["hits"]["hits"]
+        if not hits:
+            return {"to": q}
+        name = hits[0]["_source"]["menu"]
+        why = set(hits[0].get("matched_queries") or [])
+        if "exact" in why:                       # 이미 메뉴 이름 그대로
+            return {"to": q}
+        if "alias" in why:                       # 사전에 등록된 별칭 · 오타
+            return {"to": name}
+        if "fuzzy" in why and len(q) >= 3 and len(name) == len(q):   # 같은 길이에서 한 글자만 틀린 오타
+            return {"to": name}
+        return {"to": q}
+
+    try:
+        return cache.cached(conn, "es-fix", {"q": q}, fetch, ttl=600)["to"]
+    except EsDown:
+        return q
 
 # ── 레시피 검색 ────────────────────────────────────────────────────────────────
 def _recipe_query(q: str) -> dict:
@@ -149,12 +190,15 @@ def search_recipes(
     q = _norm(q)
     if page == 1:
         cache.hit("q", q.lower()[:30])          # 인기 검색어 (팀 레시피 검색과 같은 집계)
+    asked = q
+    q = _fix_query(conn, q)                     # 김치찌게 → 김치찌개
+    fixed = {"query": q, "correctedFrom": asked if q != asked else None}
     items = [i for i in user_items(conn, user["user_id"]) if i["kind"] == "TAGKIND_EXCLUDE"] if user and prefs == "on" else []
     try:
         cand = _es_candidates(conn, q)
     except EsDown as e:
         data = team_recipes._search(conn, q, None, max_min, max_cost, dish_type, "views", page, size, items)
-        return {**data, "engine": "pg", "esError": str(e)[:100], "excluded": [i["name"] for i in items]}
+        return {**data, **fixed, "engine": "pg", "esError": str(e)[:100], "excluded": [i["name"] for i in items]}
 
     rows = _rows_by_ids(conn, cand["ids"], max_min, max_cost, dish_type, items) if cand["ids"] else []
     start = (page - 1) * size
@@ -164,7 +208,7 @@ def search_recipes(
         if hl:
             it["titleHighlight"] = hl                 # 검색어 부분이 <b> … </b>
     return {"total": len(rows), "page": page, "size": size, "items": out, "engine": "es",
-            "esTotal": cand["esTotal"], "excluded": [i["name"] for i in items]}
+            "esTotal": cand["esTotal"], "excluded": [i["name"] for i in items], **fixed}
 
 
 # ── 메뉴 자동완성 ──────────────────────────────────────────────────────────────

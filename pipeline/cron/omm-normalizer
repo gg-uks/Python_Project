@@ -1,0 +1,10 @@
+# /etc/cron.d/omm-normalizer — 노멀라이저 (back1 · back2 같은 내용)
+# 원래 admina crontab: 30 20 * * * nice -n 10 env MALLOC_ARENA_MAX=2 /opt/pipeline/normalizer/daily.sh (주석 처리됨, omm_ha.py 가 같은 옵션으로 돌림)
+# 20:30 main  : 우선 서버(ha.conf PREFER_NORMALIZER, 기본 back2)만 돌림 — 수집기 18:00 일일 작업 · 보고서 18:30 뒤
+# 21:30 backup: 오늘 아직 성공 못 했으면 살아 있는 쪽이 돌림 (PostgreSQL 잠금으로 동시 실행 막음)
+# 23:30 backup: 수집 일일 작업이 22:30 넘겨 끝난 날, 수집분 반영 (평소엔 "이미 성공"으로 건너뜀)
+# 11-27~: 수집 일일 작업(collector data/raw/daily_done.txt)이 안 끝났으면 22:30 까지 기다렸다 돌림. "성공" = 수집이 끝난 뒤의 성공
+SHELL=/bin/bash
+30 20 * * * root /opt/pipeline/api/.venv/bin/python -I /opt/pipeline/ha/omm_ha.py normalizer --slot main   >> /var/log/omm-ha-normalizer.log 2>&1
+30 21 * * * root /opt/pipeline/api/.venv/bin/python -I /opt/pipeline/ha/omm_ha.py normalizer --slot backup >> /var/log/omm-ha-normalizer.log 2>&1
+30 23 * * * root /opt/pipeline/api/.venv/bin/python -I /opt/pipeline/ha/omm_ha.py normalizer --slot backup >> /var/log/omm-ha-normalizer.log 2>&1

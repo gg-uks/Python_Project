@@ -53,8 +53,10 @@ made = []   # (파일, 분석 번호, 제목, 설명)
 def save(fig, name, no, title, note):
     # 화면용 SVG(벡터 · 확대해도 선명) + 내려받기용 PNG(200dpi)
     fig.savefig(os.path.join(OUT, name)); fig.savefig(os.path.join(OUT, name[:-4] + '.svg'))
-    if SHOW:
-        from IPython.display import display; display(fig)
+    if SHOW:                                   # 노트북: 셀 아래에 그림 보여 주기
+        import io
+        from IPython.display import display, Image
+        b = io.BytesIO(); fig.savefig(b, format='png', dpi=110); display(Image(data=b.getvalue()))
     plt.close(fig); made.append((name, no, title, note)); print(f'  ✔ {name} (+svg)')
 
 def empty(name, no, title, why):

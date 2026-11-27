@@ -8,9 +8,10 @@
 | 폴더 | 내용 |
 |---|---|
 | `frontend/` | 화면 (React + Vite). 메뉴 추천 · 상황 문장 검색 · 레시피 · 냉장고 털기 · 재료 시세 · 트렌드 · 먹은 기록 · 챗봇 · 관리자 데이터 분석 |
-| `backend/` | API (FastAPI · PostgreSQL · Redis · Elasticsearch · Gemini 챗봇) |
+| `backend/` | API (FastAPI · PostgreSQL · Valkey · Elasticsearch · Gemini 챗봇) |
 | `backend/report/` | 데이터 분석 8가지 (pandas + matplotlib). `analyses/` 에 분석별 파일, `notebooks/` 에 분석별 노트북 |
 | `backend/sql/` | API 계정 · 추천 · 먹은 기록 테이블 SQL |
+| `pipeline/` | 데이터 파이프라인: 수집기(collector) · 노멀라이저(normalizer) · 이중화(ha) · 매일 점검 · cron |
 | `docs/` | 챗봇 흐름도 (draw.io) |
 
 ## 데이터 분석 8가지 (`backend/report/analyses/`)
