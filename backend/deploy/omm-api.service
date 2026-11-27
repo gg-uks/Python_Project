@@ -1,0 +1,17 @@
+[Unit]
+Description=OMM API (FastAPI · uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ommapi
+Group=wheel
+WorkingDirectory=/opt/pipeline/api
+EnvironmentFile=/opt/pipeline/api/omm-api.env
+# 로그는 프로그램이 직접 씀 (systemd StandardOutput=append: 는 SELinux 때문에 /opt 에서 실패 · 209/STDOUT)
+ExecStart=/bin/sh -c "exec /opt/pipeline/api/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips 10.0.10.1 >> /opt/pipeline/api/api.log 2>&1"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

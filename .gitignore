@@ -1,0 +1,23 @@
+# 비밀 값 · 로컬 설정
+*.env
+.env
+.env.local
+!.env.example
+!omm-api.env.example
+.pgenv
+# 빌드 · 패키지
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+# 분석 그림 결과 (서버가 매일 다시 그림)
+backend/report/*.png
+backend/report/*.svg
+backend/report/*.html
+backend/report/manifest.json
+backend/report/notebooks/_out/
+backend/report/.mpl/
+*.bak_*
+# 예시 데이터 (만개의레시피 수집 데이터 · 공개 저장소에 올리지 않음)
+frontend/public/mock-data.json
