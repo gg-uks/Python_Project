@@ -299,7 +299,7 @@ export default function Analysis() {
           <ol>{(METHOD[type] || []).map(x => <li key={x}>{x}</li>)}</ol>
           <p className="an-src">{SOURCE[type]}</p>
         </div>} />
-        {report.data?.generatedAt && <p className="nb-foot">그림 그린 시각 {report.data.generatedAt} · 데이터는 매일 17:40 적재 뒤 18:30 에 다시 그려요</p>}
+        {report.data?.generatedAt && <p className="nb-foot">그림 그린 시각 {report.data.generatedAt}</p>}
       </div>
     </div>
   )
