@@ -5,7 +5,7 @@
   - 음식 이름: "○○ 먹방", "○○ 만들기", "○○ 레시피" 바로 앞 말 + 해시태그(#○○)
   - 메뉴 사전(menu_seed.csv · spelling_norm.csv)에 있으면 표준 메뉴명으로 (만개 · 영양과 이어짐)
     없으면 새 음식 후보 (사전에 아직 없는 것) → 맞으면 menu_seed.csv 에 추가
-  - 기간 비교: 최근 30일 vs 그 전 150일 (30일 길이로 맞춤) → 증가 배수
+  - 기간 비교: 최근 30일 vs 그 전 150일 → 기간별 표본 안 비중끼리 비교한 증가 배수
 
 준비: config.ini
   [youtube]
@@ -22,7 +22,7 @@
 결과 (data/youtube)
   trend_videos.csv               영상 × 검색어 × 기간 × 실행일 (제목 · 채널 · 업로드일 · 조회수 · 좋아요 · 댓글 · 길이(초) · is_shorts
                                  · title_menu: 제목을 레시피 제목과 같은 규칙으로 묶은 메뉴 · foods: 제목에서 찾은 음식 이름)
-  trend_foods.csv                음식 이름 1개: 최근 영상 수 · 최근 채널 수 · 이전 영상 수(30일로 맞춤) · 증가 배수 · 최근 조회수 합
+  trend_foods.csv                음식 이름 1개: 최근 영상 수 · 최근 채널 수 · 이전 영상 수 · 증가 배수(표본 안 비중끼리 비교) · 최근 조회수 합
                                  (채널 2곳 이상만, 확인 필요는 3곳 이상 — 한 채널 해시태그 반복은 뺌)
                                  · menu: 표준 메뉴명 (사전에 있으면) · status: 사전에 있음 / 새 음식 후보 / 확인 필요
   trend_new_food_candidates.csv  사전에 없는 음식만 (menu_seed.csv 에 추가할지 보는 용)
@@ -233,6 +233,9 @@ def rebuild(recent_days, before_days):
     v.to_csv(VIDEOS, index=False, encoding='utf-8-sig')
     last = v['run_date'].max()
     r = v[v['run_date'] == last].drop_duplicates(['video_id', 'period'])     # 여러 검색어에 걸린 같은 영상은 한 번만
+    # 표본 전체 영상 수 — 기간마다 검색 결과 개수가 달라서 '표본 안 비중'끼리 비교
+    n_recent = max((r['period'] == '최근').sum(), 1)
+    n_before = max((r['period'] == '이전').sum(), 1)
     cnt = collections.defaultdict(lambda: {'최근': 0, '이전': 0, 'views': 0, 'status': '', 'example': '', 'channels': set()})
     for _, x in r.iterrows():
         for name, status in foods_in(str(x['title']), to_std):
@@ -243,15 +246,13 @@ def rebuild(recent_days, before_days):
                 c['views'] += int(x['views'] or 0)
                 c['channels'].add(x['channel'])
                 c['example'] = c['example'] or str(x['title'])[:60]
-    scale = recent_days / before_days                                    # 이전 기간을 최근 기간 길이로 맞춤
     rows = []
     for name, c in cnt.items():
-        before = c['이전'] * scale
         rows.append({'run_date': last, 'food': name, 'menu': name if c['status'] == '사전' else None,
                      'status': STATUS[c['status']], 'recent_videos': c['최근'], 'recent_channels': len(c['channels']),
-                     'before_videos_scaled': round(before, 1),
-                     'growth': round((c['최근'] + 1) / (before + 1), 2), 'recent_views': c['views'], 'example_title': c['example']})
-    cols = ['run_date', 'food', 'menu', 'status', 'recent_videos', 'recent_channels', 'before_videos_scaled', 'growth', 'recent_views', 'example_title']
+                     'before_videos': c['이전'],                     # growth = 최근 표본 안 비중 / 이전 표본 안 비중
+                     'growth': round(((c['최근'] + 0.5) / n_recent) / ((c['이전'] + 0.5) / n_before), 2), 'recent_views': c['views'], 'example_title': c['example']})
+    cols = ['run_date', 'food', 'menu', 'status', 'recent_videos', 'recent_channels', 'before_videos', 'growth', 'recent_views', 'example_title']
     f = pd.DataFrame(rows, columns=cols)
     # 한 채널이 자기 해시태그를 반복한 건 트렌드가 아님 → 최근 영상을 올린 채널이 2곳 이상 (확인 필요는 3곳 이상)
     f = f[(f['recent_channels'] >= 2) & ((f['status'] != '확인 필요') | (f['recent_channels'] >= 3))]
@@ -262,7 +263,7 @@ def rebuild(recent_days, before_days):
     print(f'\n{last} 회차: 영상 {r["video_id"].nunique():,}개 · 음식 이름 {len(f)}개 (사전에 있음 {known} · 새 음식 후보 · 확인 필요 {len(f) - known})')
     print(f'  → {FOODS}\n  → {NEW}  (음식이 맞으면 menu_seed.csv 에 추가 → --rebuild)')
     if len(f):
-        print(f.head(20)[['food', 'status', 'recent_videos', 'recent_channels', 'before_videos_scaled', 'growth', 'recent_views']].to_string(index=False))
+        print(f.head(20)[['food', 'status', 'recent_videos', 'recent_channels', 'before_videos', 'growth', 'recent_views']].to_string(index=False))
 
 
 def main():

@@ -60,7 +60,7 @@
 - `food_menu.csv`: `food_cd`, `food_name`, `food_ref`, `menu`, `match_by`, `kind`, `serving_size`, `z10500`, `energy_kcal_100g`
 - `menu_nutrition_unmatched.csv`: `menu`, `recipes`, `searched_as`, `status`
 - `trend_videos.csv`: `run_date`, `query`, `period`, `video_id`, `title`, `channel`, `published_at`, `views`, `likes`, `comments`, `title_menu`, `foods`
-- `trend_foods.csv`: `run_date`, `food`, `menu`, `status`, `recent_videos`, `recent_channels`, `before_videos_scaled`, `growth`, `recent_views`, `example_title`
+- `trend_foods.csv`: `run_date`, `food`, `menu`, `status`, `recent_videos`, `recent_channels`, `before_videos`, `growth` (최근 표본 안 비중 ÷ 이전 표본 안 비중, +0.5 보정), `recent_views`, `example_title`
 - `menu_seed.csv`: `menu`, `aliases`
 - `spelling_norm.csv`: `from`, `to`, `memo`
 - `kamis_item_map.csv`: `ingredient`, `category_code`, `item_code`, `kind_code`, `rank_code`, `memo`
